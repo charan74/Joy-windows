@@ -1,5 +1,12 @@
-// MainWindow.xaml.cs — Joy Windows
-// Wires iris gaze tracking → robot eye movement + all moods + sounds.
+// MainWindow.xaml.cs — Joy Windows — MASTER VERSION
+//
+// Full orchestration:
+//   - Eye iris tracking → robot eyes follow your real eyes
+//   - All 7 emotions triggered correctly
+//   - Sounds on every phase transition
+//   - Timer freeze/unfreeze
+//   - Red eyes only on CRITICAL
+//   - Shake text on CRITICAL
 
 using Joy.Windows.Controls;
 using Joy.Windows.Models;
@@ -14,38 +21,54 @@ namespace Joy.Windows.Views;
 
 public partial class MainWindow : Window
 {
-    private readonly TimerState            _timer  = new();
-    private readonly CameraService         _camera = new();
+    // ─── Services ─────────────────────────────────────────────────────────────
+    private readonly TimerState            _timer   = new();
+    private readonly CameraService         _camera  = new();
     private readonly FocusDetectorService? _detect;
-    private readonly FocusMoodController   _mood   = new();
-    private readonly SoundService          _sound  = new();
-    private readonly NotificationService   _notify = new();
+    private readonly FocusMoodController   _mood    = new();
+    private readonly SoundService          _sound   = new();
+    private readonly NotificationService   _notify  = new();
 
+    // ─── Timers ───────────────────────────────────────────────────────────────
     private readonly DispatcherTimer _focusLoop;
     private readonly DispatcherTimer _shakeTimer;
-    private bool _shakeRight;
 
-    private DistractionPhase _prevPhase = DistractionPhase.None;
-    private Mood             _prevMood  = Mood.Normal;
+    // ─── Change tracking (only act on transitions) ────────────────────────────
+    private Mood             _lastMood  = Mood.Normal;
+    private DistractionPhase _lastPhase = DistractionPhase.None;
+    private bool             _shakeOn;
 
+    // ─── Init ─────────────────────────────────────────────────────────────────
     public MainWindow()
     {
         InitializeComponent();
 
+        // Load cascade files for eye detection
         try
         {
-            string bd = AppDomain.CurrentDomain.BaseDirectory;
-            string pd = Path.GetFullPath(Path.Combine(bd, @"..\..\.."));
+            string bd  = AppDomain.CurrentDomain.BaseDirectory;
+            string pd  = Path.GetFullPath(Path.Combine(bd, @"..\..\.."));
             _detect = new FocusDetectorService(
-                Find("haarcascade_frontalface_default.xml", bd, pd),
-                Find("haarcascade_eye.xml", bd, pd));
-            _camera.FrameCaptured += f => _detect.ProcessFrame(f);
+                FindFile("haarcascade_frontalface_default.xml", bd, pd),
+                FindFile("haarcascade_eye.xml",                 bd, pd));
+            _camera.FrameCaptured += frame => _detect.ProcessFrame(frame);
         }
         catch { _detect = null; }
 
-        _mood.OnTimerReset   = () => { _sound.PlayTimerReset(); _timer.ResetTimer(); };
-        _mood.OnUserReturned = () => { _timer.Frozen = false; _timer.DistractionPhase = DistractionPhase.None; };
+        // Wire distraction callbacks
+        _mood.OnTimerReset = () =>
+        {
+            _sound.PlayTimerReset();
+            _timer.ResetTimer();
+        };
+        _mood.OnUserReturned = () =>
+        {
+            _timer.Frozen           = false;
+            _timer.DistractionPhase = DistractionPhase.None;
+            _sound.PlayFocusGained();
+        };
 
+        // Wire timer completion
         _timer.OnComplete = () =>
         {
             _sound.PlayCelebration();
@@ -54,15 +77,17 @@ public partial class MainWindow : Window
             _notify.SendTimerComplete(_timer.TotalSeconds / 60);
         };
 
-        // 10 Hz focus + gaze loop
+        // 10 Hz focus + emotion loop
         _focusLoop = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-        _focusLoop.Tick += FocusTick;
+        _focusLoop.Tick += OnFocusTick;
 
-        _shakeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(75) };
+        // Shake timer for CRITICAL text
+        bool shakeRight = false;
+        _shakeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(70) };
         _shakeTimer.Tick += (_, _) =>
         {
-            _shakeRight = !_shakeRight;
-            TxtTimer.RenderTransform = new TranslateTransform(_shakeRight ? 3 : -3, 0);
+            shakeRight = !shakeRight;
+            TxtTimer.RenderTransform = new TranslateTransform(shakeRight ? 3.5 : -3.5, 0);
         };
 
         Loaded += (_, _) =>
@@ -74,85 +99,118 @@ public partial class MainWindow : Window
         };
         Closed += (_, _) => Cleanup();
 
-        Left = SystemParameters.WorkArea.Right  - Width  - 20;
-        Top  = SystemParameters.WorkArea.Bottom - Height - 20;
+        // Position bottom-right of work area
+        Left = SystemParameters.WorkArea.Right  - Width  - 24;
+        Top  = SystemParameters.WorkArea.Bottom - Height - 24;
     }
 
-    // ─── Main loop ────────────────────────────────────────────────────────────
-    private void FocusTick(object? s, EventArgs e)
+    // ─── Main focus/mood loop ─────────────────────────────────────────────────
+    private void OnFocusTick(object? sender, EventArgs e)
     {
         bool focused = _detect?.IsFocused ?? true;
 
-        // ── Feed gaze point into robot eyes ───────────────────────────────────
-        // GazePoint: (0,0)=top-left, (1,1)=bottom-right, (0.5,0.5)=center
-        // Map to eye constraint space so eyes follow your actual iris movement
+        // Feed real iris position into robot eyes (they follow your eyes)
         if (_detect != null)
         {
             var (gx, gy) = _detect.GazePoint;
             EyesControl.SetGazeTarget(gx, gy);
         }
 
-        // ── Mood controller ───────────────────────────────────────────────────
+        // Run mood state machine
         _mood.IsTimerActive = _timer.IsRunning;
         _mood.Update(focused);
 
         var newMood  = _mood.CurrentMood;
         var newPhase = _mood.CurrentPhase;
 
-        // Mood changed → update eyes
-        if (newMood != _prevMood)
+        // ── Mood changed → update eyes ────────────────────────────────────────
+        if (newMood != _lastMood)
         {
             EyesControl.SetMood(newMood);
-            _prevMood = newMood;
+            _lastMood = newMood;
         }
 
-        // Phase changed → sound + red eyes + shake
-        if (newPhase != _prevPhase)
+        // ── Phase changed → sound + red eyes + shake ──────────────────────────
+        if (newPhase != _lastPhase)
         {
-            switch (newPhase)
-            {
-                case DistractionPhase.Angry:
-                    _sound.PlayDistracted();
-                    break;
-                case DistractionPhase.Critical:
-                    _sound.PlayDistracted();
-                    break;
-                case DistractionPhase.None when _prevPhase != DistractionPhase.None:
-                    _sound.PlayFocusGained();
-                    break;
-            }
-
-            EyesControl.SetRedEyes(newPhase == DistractionPhase.Critical);
-
-            if (newPhase == DistractionPhase.Critical && !_shakeTimer.IsEnabled)
-                _shakeTimer.Start();
-            else if (newPhase != DistractionPhase.Critical && _shakeTimer.IsEnabled)
-            { _shakeTimer.Stop(); TxtTimer.RenderTransform = null; }
-
-            _prevPhase = newPhase;
+            HandlePhaseChange(_lastPhase, newPhase);
+            _lastPhase = newPhase;
         }
 
-        // Timer freeze + display
+        // ── Timer freeze/display ──────────────────────────────────────────────
         if (_timer.IsRunning)
         {
             _timer.Frozen           = newPhase != DistractionPhase.None;
             _timer.DistractionPhase = newPhase;
-            TxtTimer.Text = _timer.DisplayText;
-            TxtTimer.Foreground = newPhase == DistractionPhase.Critical
-                ? new SolidColorBrush(Color.FromRgb(255, 55, 55))
-                : Brushes.White;
+            RefreshTimer();
         }
     }
 
-    // ─── UI ───────────────────────────────────────────────────────────────────
+    private void HandlePhaseChange(DistractionPhase from, DistractionPhase to)
+    {
+        // Play sound on transition
+        switch (to)
+        {
+            case DistractionPhase.Searching:
+                // Subtle — no sound yet, just curious eyes
+                break;
+            case DistractionPhase.Angry:
+                _sound.PlayDistracted();
+                break;
+            case DistractionPhase.Critical:
+                _sound.PlayDistracted();
+                break;
+            case DistractionPhase.Reset:
+                // Sound handled by OnTimerReset callback
+                break;
+            case DistractionPhase.None when from != DistractionPhase.None:
+                // User returned — sound handled by OnUserReturned callback
+                break;
+        }
+
+        // Red eyes only during critical
+        bool showRed = to == DistractionPhase.Critical;
+        EyesControl.SetRedEyes(showRed);
+
+        // Shake text during critical
+        bool shouldShake = to == DistractionPhase.Critical;
+        if (shouldShake && !_shakeOn)
+        {
+            _shakeTimer.Start();
+            _shakeOn = true;
+        }
+        else if (!shouldShake && _shakeOn)
+        {
+            _shakeTimer.Stop();
+            TxtTimer.RenderTransform = null;
+            _shakeOn = false;
+        }
+    }
+
+    // ─── Timer UI ─────────────────────────────────────────────────────────────
+    private void RefreshTimer()
+    {
+        TxtTimer.Text = _timer.DisplayText;
+
+        TxtTimer.Foreground = _timer.DistractionPhase == DistractionPhase.Critical
+            ? new SolidColorBrush(Color.FromRgb(255, 55, 55))
+            : Brushes.White;
+    }
+
+    // ─── Button handlers ──────────────────────────────────────────────────────
     private void BtnStart_Click(object sender, RoutedEventArgs e)
     {
-        int mins = GetMins();
-        if (mins > 0) _timer.Start(mins); else _timer.StartNoTimer();
+        int mins = GetSelectedMinutes();
+        if (mins > 0) _timer.Start(mins);
+        else          _timer.StartNoTimer();
+
         SetupPanel.Visibility   = Visibility.Collapsed;
         RunningPanel.Visibility = Visibility.Visible;
-        TxtTimer.Text = _timer.DisplayText;
-        _prevPhase = DistractionPhase.None; _prevMood = Mood.Normal;
+        RefreshTimer();
+
+        // Reset state
+        _lastMood  = Mood.Normal;
+        _lastPhase = DistractionPhase.None;
         EyesControl.SetMood(Mood.Normal);
         EyesControl.SetRedEyes(false);
         _sound.PlayFocusGained();
@@ -160,35 +218,51 @@ public partial class MainWindow : Window
 
     private void BtnStop_Click(object sender, RoutedEventArgs e)
     {
-        _timer.Stop(); _shakeTimer.Stop();
-        TxtTimer.RenderTransform = null;
+        _timer.Stop();
+        StopShake();
         RunningPanel.Visibility = Visibility.Collapsed;
         SetupPanel.Visibility   = Visibility.Visible;
         EyesControl.SetMood(Mood.Normal);
         EyesControl.SetRedEyes(false);
-        _prevPhase = DistractionPhase.None; _prevMood = Mood.Normal;
+        _lastMood  = Mood.Normal;
+        _lastPhase = DistractionPhase.None;
     }
 
     private void BtnMinimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void BtnClose_Click(object sender, RoutedEventArgs e)    => Application.Current.Shutdown();
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => DragMove();
 
-    private int GetMins()
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+    private void StopShake()
+    {
+        _shakeTimer.Stop();
+        TxtTimer.RenderTransform = null;
+        _shakeOn = false;
+    }
+
+    private int GetSelectedMinutes()
     {
         foreach (var rb in new[] { Rb00, Rb15, Rb25, Rb45, Rb60 })
             if (rb.IsChecked == true && int.TryParse(rb.Tag?.ToString(), out int m)) return m;
         return 0;
     }
 
-    private static string Find(string file, params string[] dirs)
+    private static string FindFile(string file, params string[] dirs)
     {
-        foreach (var d in dirs) { var p = Path.Combine(d, file); if (File.Exists(p)) return p; }
+        foreach (var d in dirs)
+        {
+            var path = Path.Combine(d, file);
+            if (File.Exists(path)) return path;
+        }
         return file;
     }
 
     private void Cleanup()
     {
-        _focusLoop.Stop(); _shakeTimer.Stop();
-        _camera.Dispose(); _detect?.Dispose(); _sound.Dispose();
+        _focusLoop.Stop();
+        StopShake();
+        _camera.Dispose();
+        _detect?.Dispose();
+        _sound.Dispose();
     }
 }
