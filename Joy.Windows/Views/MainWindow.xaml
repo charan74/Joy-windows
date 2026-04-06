@@ -1,0 +1,105 @@
+<!-- MainWindow.xaml — Joy Windows
+     Borderless, always-on-top floating window.
+     Shows the robot eyes + timer display during active sessions,
+     or the timer setup panel when idle. -->
+<Window x:Class="Joy.Windows.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:Joy.Windows.Controls"
+        Title="Joy"
+        Width="260" Height="200"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+
+    <Border Background="#FF000000"
+            CornerRadius="12"
+            BorderBrush="#44FFFFFF"
+            BorderThickness="1">
+
+        <Grid Margin="16,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Title bar -->
+            <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                <TextBlock Text="JOY"
+                           FontFamily="/Resources/#VT323-Regular"
+                           FontSize="18"
+                           Foreground="#AAFFFFFF"
+                           VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button x:Name="BtnMinimize"
+                            Content="—"
+                            Width="22" Height="22"
+                            Style="{StaticResource TitleBarButton}"
+                            Click="BtnMinimize_Click"/>
+                    <Button x:Name="BtnClose"
+                            Content="✕"
+                            Width="22" Height="22"
+                            Margin="4,0,0,0"
+                            Style="{StaticResource TitleBarButton}"
+                            Click="BtnClose_Click"/>
+                </StackPanel>
+            </DockPanel>
+
+            <!-- Robot eyes -->
+            <controls:RobotEyesControl
+                x:Name="EyesControl"
+                Grid.Row="1"
+                Height="80"
+                Margin="0,4"/>
+
+            <!-- Timer area (visible while running) -->
+            <Grid Grid.Row="2" Margin="0,4,0,0">
+
+                <!-- Setup panel (idle) -->
+                <StackPanel x:Name="SetupPanel" Visibility="Visible">
+                    <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,8">
+                        <RadioButton x:Name="Rb00"  Content="FREE"  GroupName="Duration" Margin="3" Style="{StaticResource DurationButton}" Tag="0"  IsChecked="True"/>
+                        <RadioButton x:Name="Rb15"  Content="15"    GroupName="Duration" Margin="3" Style="{StaticResource DurationButton}" Tag="15"/>
+                        <RadioButton x:Name="Rb25"  Content="25"    GroupName="Duration" Margin="3" Style="{StaticResource DurationButton}" Tag="25"/>
+                        <RadioButton x:Name="Rb45"  Content="45"    GroupName="Duration" Margin="3" Style="{StaticResource DurationButton}" Tag="45"/>
+                        <RadioButton x:Name="Rb60"  Content="60"    GroupName="Duration" Margin="3" Style="{StaticResource DurationButton}" Tag="60"/>
+                    </WrapPanel>
+                    <Button x:Name="BtnStart"
+                            Content="START"
+                            FontFamily="/Resources/#VT323-Regular"
+                            FontSize="20"
+                            Foreground="White"
+                            Background="#22FFFFFF"
+                            BorderBrush="#33FFFFFF"
+                            Padding="0,6"
+                            Click="BtnStart_Click"
+                            Style="{StaticResource PixelButton}"/>
+                </StackPanel>
+
+                <!-- Running panel -->
+                <StackPanel x:Name="RunningPanel" Visibility="Collapsed">
+                    <TextBlock x:Name="TxtTimer"
+                               FontFamily="/Resources/#VT323-Regular"
+                               FontSize="36"
+                               Foreground="White"
+                               HorizontalAlignment="Center"/>
+                    <Button x:Name="BtnStop"
+                            Content="STOP"
+                            FontFamily="/Resources/#VT323-Regular"
+                            FontSize="16"
+                            Foreground="#88FFFFFF"
+                            Background="#11FFFFFF"
+                            Padding="0,4"
+                            Margin="0,6,0,0"
+                            Click="BtnStop_Click"
+                            Style="{StaticResource PixelButton}"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
